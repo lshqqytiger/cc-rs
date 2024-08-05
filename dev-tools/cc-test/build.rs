@@ -79,6 +79,21 @@ fn main() {
         }
     }
 
+    if env::var("CARGO_FEATURE_TEST_HIP").is_ok() {
+        let hipcc = match env::var("HIPCC") {
+            Ok(var) => which::which(var),
+            Err(_) => which::which("hipcc"),
+        };
+        if hipcc.is_ok() {
+            cc::Build::new()
+                .hip(true)
+                .file("src/hip.cu")
+                .compile("libhip.a");
+
+            println!("cargo:rustc-cfg=feature=\"hip\"");
+        }
+    }
+
     if target.contains("windows") {
         cc::Build::new().file("src/windows.c").compile("windows");
     }

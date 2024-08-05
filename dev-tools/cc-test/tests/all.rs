@@ -57,6 +57,17 @@ fn opt_linkage() {
     }
 }
 
+#[cfg(feature = "hip")]
+#[test]
+fn hip_here() {
+    extern "C" {
+        fn hip_kernel();
+    }
+    unsafe {
+        hip_kernel();
+    }
+}
+
 #[cfg(feature = "cuda")]
 #[test]
 fn cuda_here() {

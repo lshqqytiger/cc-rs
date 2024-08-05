@@ -276,6 +276,7 @@ pub struct Build {
     cpp: bool,
     cpp_link_stdlib: Option<Option<Arc<str>>>,
     cpp_set_stdlib: Option<Arc<str>>,
+    hip: bool,
     cuda: bool,
     cudart: Option<Arc<str>>,
     std: Option<Arc<str>>,
@@ -401,6 +402,7 @@ impl Build {
             cpp: false,
             cpp_link_stdlib: None,
             cpp_set_stdlib: None,
+            hip: false,
             cuda: false,
             cudart: None,
             std: None,
@@ -572,7 +574,7 @@ impl Build {
 
     fn ensure_check_file(&self) -> Result<PathBuf, Error> {
         let out_dir = self.get_out_dir()?;
-        let src = if self.cuda {
+        let src = if self.hip || self.cuda {
             assert!(self.cpp);
             out_dir.join("flag_check.cu")
         } else if self.cpp {
@@ -639,6 +641,7 @@ impl Build {
                 .host(&self.get_host()?)
                 .debug(false)
                 .cpp(self.cpp)
+                .hip(self.hip)
                 .cuda(self.cuda);
             cfg.try_get_compiler()?
         };
@@ -662,6 +665,7 @@ impl Build {
             &mut cmd,
             &obj,
             CmdAddOutputFileArgs {
+                hip: self.hip,
                 cuda: self.cuda,
                 is_assembler_msvc: false,
                 msvc: compiler.is_like_msvc(),
@@ -816,6 +820,15 @@ impl Build {
     /// `None` for MSVC and `libstdc++` for anything else.
     pub fn cpp(&mut self, cpp: bool) -> &mut Build {
         self.cpp = cpp;
+        self
+    }
+
+    /// 
+    pub fn hip(&mut self, hip: bool) -> &mut Build {
+        self.hip = hip;
+        if hip {
+            self.cpp = true;
+        }
         self
     }
 
@@ -1634,6 +1647,7 @@ impl Build {
             &mut cmd,
             &obj.dst,
             CmdAddOutputFileArgs {
+                hip: self.hip,
                 cuda: self.cuda,
                 is_assembler_msvc,
                 msvc: compiler.is_like_msvc(),
@@ -2473,6 +2487,15 @@ impl Build {
             self.assemble_progressive(dst, &[dlink.as_path()])?;
         }
 
+        if self.hip && self.hip_file_count() > 0 {
+            let out_dir = self.get_out_dir()?;
+            let dlink = out_dir.join(lib_name.to_owned() + "_dlink.o");
+            let mut hipcc = self.get_compiler().to_command();
+            hipcc.arg("--device-link").arg("-o").arg(&dlink).arg(dst);
+            run(&mut hipcc, "hipcc", &self.cargo_output)?;
+            self.assemble_progressive(dst, &[dlink.as_path()])?;
+        }
+
         let target = self.get_target()?;
         if target.contains("msvc") {
             // The Rust compiler will look for libfoo.a and foo.lib, but the
@@ -2874,6 +2897,12 @@ impl Build {
                     format!("arm-kmc-eabi-{}", gnu)
                 } else if target.starts_with("aarch64-kmc-solid_") {
                     format!("aarch64-kmc-elf-{}", gnu)
+                } else if target.starts_with("amdgcn") {
+                    if host.contains("windows") {
+                        "hipcc.bat".to_string()
+                    } else {
+                        "hipcc".to_string()
+                    }
                 } else if &*self.get_host()? != target {
                     let prefix = self.prefix_for_target(target);
                     match prefix {
@@ -2900,7 +2929,26 @@ impl Build {
             }
         };
 
-        let mut tool = if self.cuda {
+        let mut tool = if self.hip {
+            assert!(
+                tool.args.is_empty(),
+                "HIP compilation currently assumes empty pre-existing args"
+            );
+            let hipcc = match self.getenv_with_target_prefixes("HIPCC") {
+                Err(_) => PathBuf::from("hipcc"),
+                Ok(hipcc) => PathBuf::from(&*hipcc),
+            };
+            let mut hipcc_tool = Tool::with_features(
+                hipcc,
+                None,
+                self.hip,
+                &self.cached_compiler_family,
+                &self.cargo_output,
+                out_dir,
+            );
+            hipcc_tool.family = tool.family;
+            hipcc_tool
+        } else if self.cuda {
             assert!(
                 tool.args.is_empty(),
                 "CUDA compilation currently assumes empty pre-existing args"
@@ -3852,6 +3900,13 @@ impl Build {
                 .or_else(default_deployment_from_sdk)
                 .unwrap_or_else(|| "1.0".into()),
         }
+    }
+
+    fn hip_file_count(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|file| file.extension() == Some(OsStr::new("hip")))
+            .count() + self.cuda_file_count()
     }
 
     fn cuda_file_count(&self) -> usize {

@@ -386,6 +386,7 @@ for help)"
 }
 
 pub(crate) struct CmdAddOutputFileArgs {
+    pub(crate) hip: bool,
     pub(crate) cuda: bool,
     pub(crate) is_assembler_msvc: bool,
     pub(crate) msvc: bool,
@@ -397,7 +398,7 @@ pub(crate) struct CmdAddOutputFileArgs {
 
 pub(crate) fn command_add_output_file(cmd: &mut Command, dst: &Path, args: CmdAddOutputFileArgs) {
     if args.is_assembler_msvc
-        || (args.msvc && !args.clang && !args.gnu && !args.cuda && !(args.is_asm && args.is_arm))
+        || (args.msvc && !args.clang && !args.gnu && !args.hip && !args.cuda && !(args.is_asm && args.is_arm))
     {
         let mut s = OsString::from("-Fo");
         s.push(dst);
